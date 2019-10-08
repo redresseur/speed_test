@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"github.com/redresseur/speed_test/udp"
 	"log"
@@ -44,6 +45,6 @@ func main() {
 		udp.HttpSrv(l, advertising_addr, &store)
 	}()
 
-	udp.RecvUdpPkt(udp_addr, &store)
+	udp.RecvUdpPkt(context.Background(), udp_addr, &store)
 }
 

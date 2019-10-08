@@ -83,7 +83,7 @@ func TestUdpSpeedTest(t *testing.T) {
 		HttpSrv(l, listen_addr, &store)
 	}()
 
-	go RecvUdpPkt(listen_addr, &store)
+	go RecvUdpPkt(context.Background(), listen_addr, &store)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
 	defer cancel()
@@ -98,8 +98,8 @@ func TestUdpSpeedTest(t *testing.T) {
 }
 
 func TestUdpSpeedTest1(t *testing.T) {
-	listen_addr := "119.23.221.167:8080"
-	//listen_addr := "192.168.1.160:8080"
+	//listen_addr := "119.23.221.167:8080"
+	listen_addr := "192.168.1.160:8080"
 
 	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
 	defer cancel()

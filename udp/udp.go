@@ -150,7 +150,8 @@ func HttpSrv(l net.Listener, advertisingAddr string, store *sync.Map) {
 		data, _ := json.Marshal(&StartRsp{Id: sid, Addr: advertisingAddr})
 		writer.Write(data)
 
-		store.Store(sid, uint64(0))
+		sum := uint64(0)
+		store.Store(sid, &sum)
 	})
 
 	http.HandleFunc("/stop", func(writer http.ResponseWriter, request *http.Request) {
@@ -172,7 +173,7 @@ func HttpSrv(l net.Listener, advertisingAddr string, store *sync.Map) {
 
 		writer.WriteHeader(http.StatusOK)
 		writer.Header().Set("Content-Type", "Application/Json")
-		data, _ := json.Marshal(&StopRsp{Sum: sum.(uint64)})
+		data, _ := json.Marshal(&StopRsp{Sum: *(sum.(*uint64))})
 		writer.Write(data)
 	})
 
@@ -284,7 +285,7 @@ func UdpSpeedTest(ctx context.Context, start func() (*StartRsp, error), stop fun
 	return bandWidth, nil
 }
 
-func RecvUdpPkt(listenAddr string, store *sync.Map) error {
+func RecvUdpPkt(ctx context.Context, listenAddr string, store *sync.Map) error {
 	localAddr, err := net.ResolveUDPAddr("udp", listenAddr)
 	if err != nil {
 		logger.Errorf("ResolveUDPAddr %s Failure: %v", listenAddr, err)
@@ -297,29 +298,40 @@ func RecvUdpPkt(listenAddr string, store *sync.Map) error {
 		return err
 	}
 
-	data := make([]byte, 10240)
-	for {
-		n, srcAddr, err := udpConn.ReadFromUDP(data)
-		if err != nil {
-			logger.Warningf("ReadFromUDP Failure: %v", err)
-			continue
-		}
+	//for i := 0; i < runtime.NumCPU(); i++ {
+		//go func() {
+			//runtime.LockOSThread()
+			//defer runtime.UnlockOSThread()
 
-		logger.Debugf("Recv a Package from %s : length %d", srcAddr.String(), n)
-		id, seq, payload, err := Unmarshal(data[:n])
-		if err != nil {
-			logger.Warningf("Unmarshal Datagram Failure: %v", err)
-			continue
-		}
+			data := make([]byte, 10240)
+			for {
+				n, srcAddr, err := udpConn.ReadFromUDP(data)
+				if err != nil {
+					logger.Warningf("ReadFromUDP Failure: %v", err)
+					continue
+				}
 
-		sum := uint64(0)
-		if v, ok := store.Load(id); ok {
-			sum, ok = v.(uint64)
-		}
-		sum++
-		logger.Debugf("id %d, sum %d,the package: <%d, %d>", id, sum, seq, len(payload))
-		store.Store(id, sum)
-	}
+				logger.Debugf("Recv a Package from %s : length %d", srcAddr.String(), n)
+				id, seq, payload, err := Unmarshal(data[:n])
+				if err != nil {
+					logger.Warningf("Unmarshal Datagram Failure: %v", err)
+					continue
+				}
 
+				var psum *uint64
+				if v, ok := store.Load(id); ok {
+					psum = v.(*uint64)
+				} else {
+					sum := uint64(0)
+					psum = &sum
+					store.Store(id, psum)
+				}
+
+				logger.Debugf("id %d, sum %d,the package: <%d, %d>", id, atomic.AddUint64(psum, 1), seq, len(payload))
+			}
+		//}()
+	//}
+
+	<-ctx.Done()
 	return nil
 }
