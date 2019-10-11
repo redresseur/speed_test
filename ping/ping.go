@@ -4,10 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/redresseur/flogging"
 	"github.com/redresseur/speed_test/common"
 	"golang.org/x/net/icmp"
 	"golang.org/x/net/ipv4"
-	"github.com/redresseur/flogging"
 	"math"
 	"math/rand"
 	"net"
@@ -17,7 +17,7 @@ import (
 
 var logger *flogging.FabricLogger
 
-func init()  {
+func init() {
 	logger = flogging.MustGetLogger("speed_test.ping")
 }
 
@@ -219,7 +219,7 @@ func NewWorkDelayTest(dst string, ctx context.Context) (common.Rtt, error) {
 		rtt.Avg /= float64(len(rttTimes))
 		rtt.Avg /= (1000 * 1000)
 	} else {
-		if err := NetworkJitter(rttTimes, &rtt.Avg, &rtt.Min, &rtt.Max, &rtt.Jitter); err != nil {
+		if err := NetworkJitter(rttTimes, &rtt.Min, &rtt.Max, &rtt.Avg, &rtt.Jitter); err != nil {
 			return rtt, err
 		}
 	}

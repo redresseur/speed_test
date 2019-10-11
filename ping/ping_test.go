@@ -49,9 +49,12 @@ func TestPing(t *testing.T) {
 
 func TestNewWorkDelayTest(t *testing.T) {
 	ctx, _ := context.WithTimeout(context.Background(), 4*time.Second)
-	_, err := NewWorkDelayTest("stackoverflow.com", ctx)
+	//rtt, err := NewWorkDelayTest("stackoverflow.com", ctx)
+	rtt, err := NewWorkDelayTest("hjchat02.speakin.mobi", ctx)
 	if !assert.NoError(t, err) {
 		t.Skipped()
 	}
+
+	t.Log(rtt)
 }
 

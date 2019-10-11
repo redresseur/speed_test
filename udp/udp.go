@@ -6,11 +6,13 @@ import (
 	"errors"
 	"fmt"
 	"github.com/redresseur/flogging"
+	"go.uber.org/zap"
 	"io"
 	"io/ioutil"
 	"math/rand"
 	"net"
 	"net/http"
+	"os"
 	"runtime"
 	"strconv"
 	"sync"
@@ -19,13 +21,23 @@ import (
 )
 
 const (
-	TS_UDP_LEN = 1316
+	TS_UDP_LEN = 13160
+	//TS_UDP_LEN = 1024*8
 )
 
 var logger *flogging.FabricLogger
 
 func init() {
-	logger = flogging.MustGetLogger("speed_test.udp")
+
+	logging, _ := flogging.New(flogging.Config{LogSpec: "INFO",
+		Format: "%{color}%{time:2006-01-02 15:04:05.000 MST}%{color} [%{module}][%{level:.4s}] " +
+			"[%{shortfunc}] \"%{message}\""})
+
+	if os.Getenv("SPEED_TEST_DEBUG") == "1" {
+		logging.ActivateSpec(zap.DebugLevel.String())
+	}
+
+	logger = logging.Logger("speed_test.udp")
 }
 
 func uint32ToBytes(u uint32) []byte {
@@ -82,11 +94,11 @@ func Unmarshal(data []byte) (id, seq uint32, payload []byte, err error) {
 		return
 	}
 
-	cs := bytesToUinit32(data[dataLen-4:])
-	if cs != uint32(checksum(data[:dataLen-4])) {
-		err = errors.New("the data is broken")
-		return
-	}
+	//cs := bytesToUinit32(data[dataLen-4:])
+	//if cs != uint32(checksum(data[:dataLen-4])) {
+	//	err = errors.New("the data is broken")
+	//	return
+	//}
 
 	id = bytesToUinit32(data[:4])
 	seq = bytesToUinit32(data[4:8])
@@ -124,8 +136,10 @@ func SendUdpPkt(dst string, ctx context.Context, id uint32, counter *uint64) err
 			{
 				seq := atomic.AddUint64(counter, 1)
 				data := Marshal(id, uint32(seq), payload[0:n])
-				if _, err := udpConn.Write(data); err != nil {
+				if wn, err := udpConn.Write(data); err != nil {
 					logger.Errorf("send datagram failure: %v", err)
+				}else if wn != len(data) {
+					logger.Errorf("send datagram not completely: n %v wn %v", len(data), wn)
 				}
 			}
 		}
@@ -280,11 +294,15 @@ func UdpSpeedTest(ctx context.Context, start func() (*StartRsp, error), stop fun
 
 	// 最終的帶寬單位為 Mbit/s, 將所有對端收到的包纍加到一起除以間隔時間，最終算出帶寬
 	bandWidth := float64(strsp.Sum*TS_UDP_LEN*8) / float64(1024*1024) / 4
-	logger.Debugf("Udp Upload Speed %v Mbit/s", bandWidth)
+	logger.Debugf("Udp Server received Sum %v, Loss %v, Upload Speed %v Mbit/s",
+		strsp.Sum, sum-strsp.Sum, bandWidth)
 	return bandWidth, nil
 }
 
-func RecvUdpPkt(listenAddr string, store *sync.Map) error {
+
+func RecvUdpPkt(ctx context.Context, listenAddr string, store *sync.Map) error {
+	ctx, _ = context.WithCancel(ctx)
+
 	localAddr, err := net.ResolveUDPAddr("udp", listenAddr)
 	if err != nil {
 		logger.Errorf("ResolveUDPAddr %s Failure: %v", listenAddr, err)
@@ -294,32 +312,82 @@ func RecvUdpPkt(listenAddr string, store *sync.Map) error {
 	udpConn, err := net.ListenUDP("udp", localAddr)
 	if err != nil {
 		logger.Errorf("ListenUDP %s Failure: %v", listenAddr, err)
-		return err
+		panic(err)
 	}
 
-	data := make([]byte, 10240)
-	for {
-		n, srcAddr, err := udpConn.ReadFromUDP(data)
-		if err != nil {
-			logger.Warningf("ReadFromUDP Failure: %v", err)
-			continue
-		}
+	logger.Debugf("CPU Number: %v", runtime.NumCPU())
+	for i:= 0; i < 4; i ++ {
+		go func() {
+			//runtime.LockOSThread()
+			//defer runtime.UnlockOSThread()
 
-		logger.Debugf("Recv a Package from %s : length %d", srcAddr.String(), n)
-		id, seq, payload, err := Unmarshal(data[:n])
-		if err != nil {
-			logger.Warningf("Unmarshal Datagram Failure: %v", err)
-			continue
-		}
+			data := make([]byte, 2048)
+			for {
+				n, srcAddr, err := udpConn.ReadFromUDP(data)
+				if err != nil {
+					logger.Warningf("ReadFromUDP Failure: %v", err)
+					continue
+				}
 
-		sum := uint64(0)
-		if v, ok := store.Load(id); ok {
-			sum, ok = v.(uint64)
-		}
-		sum++
-		logger.Debugf("id %d, sum %d,the package: <%d, %d>", id, sum, seq, len(payload))
-		store.Store(id, sum)
+				logger.Debugf("Recv a Package from %s : length %d", srcAddr.String(), n)
+				id, seq, payload, err := Unmarshal(data[:n])
+				if err != nil {
+					logger.Warningf("Unmarshal Datagram Failure: %v", err)
+					continue
+				}
+
+				sum := uint64(0)
+				if v, ok := store.Load(id); ok {
+					sum, ok = v.(uint64)
+				}
+				sum++
+				logger.Debugf("id %d, sum %d,the package: <%d, %d>", id, sum, seq, len(payload))
+				store.Store(id, sum)
+			}
+		}()
 	}
 
+	<-ctx.Done()
 	return nil
 }
+
+//
+//func RecvUdpPkt(listenAddr string, store *sync.Map) error {
+//	localAddr, err := net.ResolveUDPAddr("udp", listenAddr)
+//	if err != nil {
+//		logger.Errorf("ResolveUDPAddr %s Failure: %v", listenAddr, err)
+//		return err
+//	}
+//
+//	udpConn, err := net.ListenUDP("udp", localAddr)
+//	if err != nil {
+//		logger.Errorf("ListenUDP %s Failure: %v", listenAddr, err)
+//		return err
+//	}
+//
+//	data := make([]byte, 102400)
+//	for {
+//		n, srcAddr, err := udpConn.ReadFromUDP(data)
+//		if err != nil {
+//			logger.Warningf("ReadFromUDP Failure: %v", err)
+//			continue
+//		}
+//
+//		logger.Debugf("Recv a Package from %s : length %d", srcAddr.String(), n)
+//		id, seq, payload, err := Unmarshal(data[:n])
+//		if err != nil {
+//			logger.Warningf("Unmarshal Datagram Failure: %v", err)
+//			continue
+//		}
+//
+//		sum := uint64(0)
+//		if v, ok := store.Load(id); ok {
+//			sum, ok = v.(uint64)
+//		}
+//		sum++
+//		logger.Debugf("id %d, sum %d,the package: <%d, %d>", id, sum, seq, len(payload))
+//		store.Store(id, sum)
+//	}
+//
+//	return nil
+//}
